@@ -37,7 +37,7 @@ import smplx
 import open3d as o3d
 import random
 import json
-from scipy.ndimage.morphology import distance_transform_edt
+from scipy.ndimage import distance_transform_edt
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -144,7 +144,7 @@ def size_centre_loss(mask1, mask2):
 
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations,
-              save_dir):
+              save_dir, contact):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
 
@@ -164,6 +164,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+
+    gif_frames_dir = os.path.join(save_dir, "gif_frames")
+    os.makedirs(gif_frames_dir, exist_ok=True)
+    for existing_file in os.listdir(gif_frames_dir):
+        if existing_file.lower().endswith((".png", ".jpg", ".jpeg")):
+            os.remove(os.path.join(gif_frames_dir, existing_file))
+    frame_paths = []
 
     elapsed_time = 0
     for iteration in range(first_iter, opt.iterations + 1):
@@ -194,6 +201,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
             render_pkg["render_o"], render_pkg["render_h"],
             render_pkg["render_alpha_o"], render_pkg["render_alpha_h"], render_pkg['depth_h'],
             render_pkg['depth_o'], render_pkg['obj_pose'], render_pkg['h_param'])
+
+        # Store current render to reuse when assembling the animation at the end of training.
+        frame_rgb = np.clip(image.permute(1, 2, 0).detach().cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
+        frame_path = os.path.join(gif_frames_dir, f"frame_{iteration:06d}.png")
+        imageio.imwrite(frame_path, frame_rgb)
+        frame_paths.append(frame_path)
 
         Ll1,Ll1_h,Ll1_o, mask_loss,mask_loss_h, mask_loss_o, ssim_loss, ssim_loss_h, ssim_loss_o, lpips_loss, lpips_loss_h, lpips_loss_o = (
             None, None, None, None, None, None, None, None, None, None, None, None)
@@ -284,21 +297,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
                 # 获取接触分数
                 contact_scores = gaussians.contact
                 
-                # 获取图像名称
-                img_name = viewpoint_cam.image_name
+                if contact is not None:
+                    contact_scores = contact
                 
                 # 获取物体网格面片
                 obj_faces = viewpoint_cam.face_sim
                 
                 # 调用可视化函数
-                visualize_human_mesh_contact(pcds, contact_scores, img_name)
-                visualize_obj_mesh_contact(pcds, obj_faces, contact_scores, img_name)
+                visualize_human_mesh_contact(pcds, contact_scores, save_dir)
+                visualize_obj_mesh_contact(pcds, obj_faces, contact_scores, save_dir)
 
         ## inite hoi loss
         contact_loss, depth_loss, collision_loss = None, None, None
         if iteration >= 100 and iteration < 160:
 
             hoi_optim = HOIOptimizer(gaussians, viewpoint_cam, render_pkg)
+            
+            if contact is not None:
+                # use gt contact area from `contact.json`
+                hoi_optim.pc.contact = contact
+            
             hoi_loss_dict, hoi_loss_weights = hoi_optim(opt)
 
             if hoi_loss_dict['loss_contact'] is not None:
@@ -316,7 +334,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
             else:
                 collision_loss = None
 
-            if contact_loss != 0 and contact_loss is None:
+            if contact_loss != 0 and contact_loss is not None:
                 contact_loss.backward(retain_graph=True)
 
             if depth_loss != 0 and depth_loss != None:
@@ -328,12 +346,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
             for name, param in gaussians.get_named_parameters().items():
                 if ((name == 'scale_obj') or (name == 'x_angle') or (name == 'y_angle') or (name == 'z_angle')):
                     param.grad = None
+            
+            # Persist optimized poses at iteration 159
             if iteration == 159:
-                print("Saving results...")
-                object_path=f'{args.data_path}/{dataset.file_name}/'
+                object_path = f"{args.data_path}/{dataset.file_name}/"
                 save_result_hoi(save_dir, h_pose, obj_pose, object_path)
-                print("Successfully saved HOI results to ", save_dir)
-                return
 
         # end time
         end_time = time.time()
@@ -391,6 +408,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
         end_time = time.time()
         # Calculate elapsed time
         elapsed_time += (end_time - start_time)
+
+    if frame_paths:
+        gif_path = os.path.join(save_dir, "training_10hz.gif")
+        with imageio.get_writer(gif_path, mode='I', duration=0.1) as writer:
+            for frame_path in frame_paths:
+                writer.append_data(imageio.imread(frame_path))
+        print(f"[GIF] Saved training GIF with {len(frame_paths)} frames to {gif_path}")
 
 
 def prepare_output_and_logger(args):
@@ -451,6 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--base_dir", type=str, default=None)
+    parser.add_argument("--use_contact_gt", action="store_true", default=False)
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
@@ -461,12 +486,18 @@ if __name__ == "__main__":
 
     save_dir = os.path.join("output/",  args.exp_name, args.file_name)
     os.makedirs(save_dir, exist_ok=True)
-
+    
+    contact = None
+    if args.use_contact_gt:
+        contact_path = f"{args.data_path}/{args.file_name}/contact.json"
+        with open(contact_path, 'r') as f:
+            contact = json.load(f)
+        contact = torch.tensor(contact, dtype=torch.bool, device="cuda").unsqueeze(1)
+        print(f"Using ground-truth contact area from {contact_path}, with dim {contact.shape}")
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations,
-              save_dir)
-
+              save_dir, contact)
     # All done
     print("\nTraining complete.")
 

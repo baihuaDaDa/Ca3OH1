@@ -15,7 +15,33 @@ smplx_model = smplx.create(model_folder, model_type=model_type,
                      num_expression_coeffs=10, use_pca=False, use_face_contour=True, **layer_arg)
 mesh_faces=np.asarray(smplx_model.faces)
 
-def visualize_human_mesh_contact(pcds, contact_scores,img_name):
+def visualize_human_mesh_contact_old(pcds, contact_scores,img_name):
+    region_score = contact_scores.detach().cpu().numpy().reshape(-1)
+    # print(np.sum(region_score[:10475]))
+    # print(region_score.shape)
+    colors = np.zeros((len(pcds), 3))
+    colors[region_score[:10475]] = np.asarray([1, 0, 0])
+    human=o3d.geometry.TriangleMesh()
+    human.vertices = o3d.utility.Vector3dVector(pcds.reshape(-1, 3))
+    human.vertex_colors = o3d.utility.Vector3dVector(colors.reshape(-1, 3))
+    human.triangles = o3d.utility.Vector3iVector(mesh_faces)
+    o3d.io.write_triangle_mesh(
+        f"./output/test_output/{img_name}/contact/{img_name}_contact_org.obj",
+        human)
+def visualize_obj_mesh_contact_old(pcds,mesh, contact_scores,img_name):
+    region_score = contact_scores.detach().cpu().numpy().reshape(-1)
+    # print(np.sum(region_score[:10475]))
+    # print(region_score.shape)
+    colors = np.zeros((len(pcds), 3))
+    colors[region_score[10475:]] = np.asarray([1, 0, 0])
+    human=o3d.geometry.TriangleMesh()
+    human.vertices = o3d.utility.Vector3dVector(pcds.reshape(-1, 3))
+    human.vertex_colors = o3d.utility.Vector3dVector(colors.reshape(-1, 3))
+    human.triangles = o3d.utility.Vector3iVector(mesh)
+    o3d.io.write_triangle_mesh(
+        f"./output/test_output/{img_name}/contact/{img_name}_contact_org_obj.obj",
+        human)
+def visualize_human_mesh_contact(pcds, contact_scores, save_dir):
     region_score = contact_scores.detach().cpu().numpy().reshape(-1)
     pcds_h = pcds[:10475].detach().cpu().numpy()
     colors = np.zeros((len(pcds_h), 3))
@@ -25,9 +51,9 @@ def visualize_human_mesh_contact(pcds, contact_scores,img_name):
     human.vertex_colors = o3d.utility.Vector3dVector(colors.reshape(-1, 3))
     human.triangles = o3d.utility.Vector3iVector(mesh_faces)
     o3d.io.write_triangle_mesh(
-        f"./output/test_output/{img_name}/contact/{img_name}_contact_org.ply",
+        f"{save_dir}/h_contact.ply",
         human)
-def visualize_obj_mesh_contact(pcds,mesh, contact_scores,img_name):
+def visualize_obj_mesh_contact(pcds, mesh, contact_scores, save_dir):
     region_score = contact_scores.detach().cpu().numpy().reshape(-1)
     pcds_o = pcds[10475:].detach().cpu().numpy()
     colors = np.zeros((len(pcds_o), 3))
@@ -37,7 +63,7 @@ def visualize_obj_mesh_contact(pcds,mesh, contact_scores,img_name):
     obj.vertex_colors = o3d.utility.Vector3dVector(colors.reshape(-1, 3))
     obj.triangles = o3d.utility.Vector3iVector(mesh)
     o3d.io.write_triangle_mesh(
-        f"./output/test_output/{img_name}/contact/{img_name}_contact_org_obj.ply",
+        f"{save_dir}/o_contact.ply",
         obj)
 def visualize_mesh_opacity(pcds,mesh, scores,img_name,sufix='h'):
     scores=scores.detach().cpu().numpy().reshape(-1)
