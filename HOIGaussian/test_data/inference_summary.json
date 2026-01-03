@@ -1,0 +1,46 @@
+{
+  "total_samples": 4,
+  "results": [
+    {
+      "category": "cup",
+      "sample_id": "COCO_train2014_000000400742",
+      "num_vertices": 10475,
+      "num_contact": 449,
+      "contact_ratio": 0.042863961813842485,
+      "output_path": "/home/xhsystem/Code/Term7/Contact/output/data_example_net/cup/COCO_train2014_000000400742/contact.json",
+      "input_path": "/home/xhsystem/Code/Term7/Ca3OH1/data_example_net/cup/COCO_train2014_000000400742"
+    },
+    {
+      "category": "cup",
+      "sample_id": "COCO_val2014_000000276055",
+      "num_vertices": 10475,
+      "num_contact": 607,
+      "contact_ratio": 0.057947494033412886,
+      "output_path": "/home/xhsystem/Code/Term7/Contact/output/data_example_net/cup/COCO_val2014_000000276055/contact.json",
+      "input_path": "/home/xhsystem/Code/Term7/Ca3OH1/data_example_net/cup/COCO_val2014_000000276055"
+    },
+    {
+      "category": "wine glass",
+      "sample_id": "2380004",
+      "num_vertices": 10475,
+      "num_contact": 329,
+      "contact_ratio": 0.031408114558472554,
+      "output_path": "/home/xhsystem/Code/Term7/Contact/output/data_example_net/wine glass/2380004/contact.json",
+      "input_path": "/home/xhsystem/Code/Term7/Ca3OH1/data_example_net/wine glass/2380004"
+    },
+    {
+      "category": "wine glass",
+      "sample_id": "HICO_train2015_00009097",
+      "num_vertices": 10475,
+      "num_contact": 414,
+      "contact_ratio": 0.03952267303102625,
+      "output_path": "/home/xhsystem/Code/Term7/Contact/output/data_example_net/wine glass/HICO_train2015_00009097/contact.json",
+      "input_path": "/home/xhsystem/Code/Term7/Ca3OH1/data_example_net/wine glass/HICO_train2015_00009097"
+    }
+  ],
+  "mode": "folder",
+  "input_dir": "/home/xhsystem/Code/Term7/Ca3OH1/data_example_net",
+  "output_dir": "/home/xhsystem/Code/Term7/Contact/output/data_example_net",
+  "checkpoint_epoch": 188,
+  "best_val_loss": 0.20622232928872108
+}
