@@ -53,6 +53,7 @@ def visualize_human_mesh_contact(pcds, contact_scores, save_dir):
     o3d.io.write_triangle_mesh(
         f"{save_dir}/h_contact.ply",
         human)
+    return human
 def visualize_obj_mesh_contact(pcds, mesh, contact_scores, save_dir):
     region_score = contact_scores.detach().cpu().numpy().reshape(-1)
     pcds_o = pcds[10475:].detach().cpu().numpy()
@@ -65,6 +66,7 @@ def visualize_obj_mesh_contact(pcds, mesh, contact_scores, save_dir):
     o3d.io.write_triangle_mesh(
         f"{save_dir}/o_contact.ply",
         obj)
+    return obj
 def visualize_mesh_opacity(pcds,mesh, scores,img_name,sufix='h'):
     scores=scores.detach().cpu().numpy().reshape(-1)
     scores_normalized = (scores - scores.min()) / (scores.max() - scores.min())

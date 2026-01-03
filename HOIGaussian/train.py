@@ -210,60 +210,59 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
 
         Ll1,Ll1_h,Ll1_o, mask_loss,mask_loss_h, mask_loss_o, ssim_loss, ssim_loss_h, ssim_loss_o, lpips_loss, lpips_loss_h, lpips_loss_o = (
             None, None, None, None, None, None, None, None, None, None, None, None)
+
+        # gaussian Loss
+        gt_image = viewpoint_cam.original_image.cuda()
+        gt_image_h = viewpoint_cam.original_image_h.cuda()
+        gt_image_o = viewpoint_cam.original_image_o.cuda()
+
+        bkgd_mask = viewpoint_cam.bkgd_mask.cuda()
+
+        bkgd_mask_o = viewpoint_cam.bkgd_mask_o.cuda()
+
+        bkgd_mask_h = viewpoint_cam.bkgd_mask_h.cuda()
+
+        centre_loss, size_loss = size_centre_loss(alpha_o.squeeze(0), bkgd_mask_o.squeeze(0))
+        alpha_o = alpha_o.masked_fill(~bkgd_mask_o.bool(), 0)
+        image_o = image_o.masked_fill(~bkgd_mask_o.bool(), 0)
+
+        bound_mask = viewpoint_cam.bound_mask.cuda()
+        Ll1 = l1_loss(image.permute(1, 2, 0)[bound_mask[0] == 1], gt_image.permute(1, 2, 0)[bound_mask[0] == 1])
+        Ll1_o = l1_loss(image_o.permute(1, 2, 0)[bound_mask[0] == 1], gt_image_o.permute(1, 2, 0)[bound_mask[0] == 1])
+        Ll1_h = l1_loss(image_h.permute(1, 2, 0)[bound_mask[0] == 1], gt_image_h.permute(1, 2, 0)[bound_mask[0] == 1])
+        mask_loss = l2_loss(alpha[bound_mask == 1], bkgd_mask[bound_mask == 1])
+        mask_loss_o = l2_loss(alpha_o[bound_mask == 1], bkgd_mask_o[bound_mask == 1])
+        mask_loss_h = l2_loss(alpha_h[bound_mask == 1], bkgd_mask_h[bound_mask == 1])
+
+        # crop the object region
+        x, y, w, h = cv2.boundingRect(bound_mask[0].cpu().numpy().astype(np.uint8))
+        img_pred = image[:, y:y + h, x:x + w].unsqueeze(0)
+        img_pred_o = image_o[:, y:y + h, x:x + w].unsqueeze(0)
+        img_pred_h = image_h[:, y:y + h, x:x + w].unsqueeze(0)
+        img_gt = gt_image[:, y:y + h, x:x + w].unsqueeze(0)
+        img_gt_o = gt_image_o[:, y:y + h, x:x + w].unsqueeze(0)
+        img_gt_h = gt_image_h[:, y:y + h, x:x + w].unsqueeze(0)
+
+        #ssim loss
+        ssim_loss = ssim(img_pred, img_gt)
+        ssim_loss_o = ssim(img_pred_o, img_gt_o)
+        ssim_loss_h = ssim(img_pred_h, img_gt_h)
+        # lipis loss
+        lpips_loss = loss_fn_vgg(img_pred, img_gt).reshape(-1)
+        lpips_loss_o = loss_fn_vgg(img_pred_o, img_gt_o).reshape(-1)
+        lpips_loss_h = loss_fn_vgg(img_pred_h, img_gt_h).reshape(-1)
+
+
+        gaussian_loss = (Ll1 * 0.3 + Ll1_o + Ll1_h +
+                            0.05 * mask_loss + 0.1 * mask_loss_o + 0.1 * mask_loss_h
+                            + 0.005 * (1.0 - ssim_loss) + 0.01 * (1.0 - ssim_loss_o) +
+                            0.01 * (1.0 - ssim_loss_h) + 0.005 * lpips_loss +
+                            0.01 * lpips_loss_o + 0.01 * lpips_loss_h)
+
         if iteration < 100:
-
-            # gaussian Loss
-            gt_image = viewpoint_cam.original_image.cuda()
-            gt_image_h = viewpoint_cam.original_image_h.cuda()
-            gt_image_o = viewpoint_cam.original_image_o.cuda()
-
-            bkgd_mask = viewpoint_cam.bkgd_mask.cuda()
-
-            bkgd_mask_o = viewpoint_cam.bkgd_mask_o.cuda()
-
-            bkgd_mask_h = viewpoint_cam.bkgd_mask_h.cuda()
-
-            centre_loss, size_loss = size_centre_loss(alpha_o.squeeze(0), bkgd_mask_o.squeeze(0))
-            alpha_o = alpha_o.masked_fill(~bkgd_mask_o.bool(), 0)
-            image_o = image_o.masked_fill(~bkgd_mask_o.bool(), 0)
-
-            bound_mask = viewpoint_cam.bound_mask.cuda()
-            Ll1 = l1_loss(image.permute(1, 2, 0)[bound_mask[0] == 1], gt_image.permute(1, 2, 0)[bound_mask[0] == 1])
-            Ll1_o = l1_loss(image_o.permute(1, 2, 0)[bound_mask[0] == 1], gt_image_o.permute(1, 2, 0)[bound_mask[0] == 1])
-            Ll1_h = l1_loss(image_h.permute(1, 2, 0)[bound_mask[0] == 1], gt_image_h.permute(1, 2, 0)[bound_mask[0] == 1])
-            mask_loss = l2_loss(alpha[bound_mask == 1], bkgd_mask[bound_mask == 1])
-            mask_loss_o = l2_loss(alpha_o[bound_mask == 1], bkgd_mask_o[bound_mask == 1])
-            mask_loss_h = l2_loss(alpha_h[bound_mask == 1], bkgd_mask_h[bound_mask == 1])
-
-            # crop the object region
-            x, y, w, h = cv2.boundingRect(bound_mask[0].cpu().numpy().astype(np.uint8))
-            img_pred = image[:, y:y + h, x:x + w].unsqueeze(0)
-            img_pred_o = image_o[:, y:y + h, x:x + w].unsqueeze(0)
-            img_pred_h = image_h[:, y:y + h, x:x + w].unsqueeze(0)
-            img_gt = gt_image[:, y:y + h, x:x + w].unsqueeze(0)
-            img_gt_o = gt_image_o[:, y:y + h, x:x + w].unsqueeze(0)
-            img_gt_h = gt_image_h[:, y:y + h, x:x + w].unsqueeze(0)
-
-            #ssim loss
-            ssim_loss = ssim(img_pred, img_gt)
-            ssim_loss_o = ssim(img_pred_o, img_gt_o)
-            ssim_loss_h = ssim(img_pred_h, img_gt_h)
-            # lipis loss
-            lpips_loss = loss_fn_vgg(img_pred, img_gt).reshape(-1)
-            lpips_loss_o = loss_fn_vgg(img_pred_o, img_gt_o).reshape(-1)
-            lpips_loss_h = loss_fn_vgg(img_pred_h, img_gt_h).reshape(-1)
-
-
-            gaussian_loss = (Ll1 * 0.3 + Ll1_o + Ll1_h +
-                             0.05 * mask_loss + 0.1 * mask_loss_o + 0.1 * mask_loss_h
-                             + 0.005 * (1.0 - ssim_loss) + 0.01 * (1.0 - ssim_loss_o) +
-                             0.01 * (1.0 - ssim_loss_h) + 0.005 * lpips_loss +
-                             0.01 * lpips_loss_o + 0.01 * lpips_loss_h)
-
             loss = gaussian_loss + size_loss * 0.01 + 0.01 * centre_loss
-
             loss.backward()
-
+            
             if iteration == 99:
                 # 可视化人体和物体的接触区域
                 # 获取3D顶点坐标 (人体 + 物体)
@@ -307,7 +306,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
                 visualize_human_mesh_contact(pcds, contact_scores, save_dir)
                 visualize_obj_mesh_contact(pcds, obj_faces, contact_scores, save_dir)
 
-        ## inite hoi loss
+
+        ## init hoi loss
         contact_loss, depth_loss, collision_loss = None, None, None
         if iteration >= 100 and iteration < 160:
 
@@ -343,6 +343,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
             if collision_loss != 0 and collision_loss is not None:
                 collision_loss.backward(retain_graph=True)
 
+            loss = gaussian_loss + size_loss * 0.01 + 0.01 * centre_loss
+            loss.backward()
+
             for name, param in gaussians.get_named_parameters().items():
                 if ((name == 'scale_obj') or (name == 'x_angle') or (name == 'y_angle') or (name == 'z_angle')):
                     param.grad = None
@@ -361,6 +364,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
             print("[Elapsed time]: ", elapsed_time)
 
         iter_end.record()
+        torch.cuda.synchronize()  # 等待 GPU 事件完成
 
         with torch.no_grad():
             if iteration < 100:
@@ -372,13 +376,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
                 depth_loss_for_log=None
                 collision_loss_for_log=None
             if iteration >= 100 and iteration < 160:
+                Ll1_loss_for_log = Ll1.item()
+                mask_loss_for_log = mask_loss.item()
+                ssim_loss_for_log = ssim_loss.item()
+                lpips_loss_for_log = lpips_loss.item()
                 contact_loss_for_log = contact_loss.item()
                 depth_loss_for_log = depth_loss.item()
                 collision_loss_for_log = collision_loss.item()
-                Ll1_loss_for_log=0
-                mask_loss_for_log=0
-                ssim_loss_for_log=0
-                lpips_loss_for_log=0
 
             if iteration % 5 == 0:
                 progress_bar.set_postfix({"#pts": gaussians._xyz.shape[0], "Ll1 Loss": f"{Ll1_loss_for_log:.{3}f}",
@@ -488,7 +492,8 @@ if __name__ == "__main__":
     os.makedirs(save_dir, exist_ok=True)
     
     contact = None
-    if args.use_contact_gt:
+    # if args.use_contact_gt:
+    if True:
         contact_path = f"{args.data_path}/{args.file_name}/contact.json"
         with open(contact_path, 'r') as f:
             contact = json.load(f)

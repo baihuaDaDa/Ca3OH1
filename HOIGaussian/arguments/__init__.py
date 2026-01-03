@@ -119,7 +119,7 @@ class OptimizationParams(ParamGroup):
         # self.normal=0.0
         # self.contact=0.01
         
-        self.contact=0.0
+        self.contact=0.1
         self.depth=1
         self.ho_dist=0
         self.collision=0.00001

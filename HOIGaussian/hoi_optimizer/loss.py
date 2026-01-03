@@ -21,13 +21,31 @@ class Losses(object):
     def __init__(self):
         pass
 
-    def compute_contact_loss(self, hverts, overts,h_contact,o_contact):
+    def compute_contact_loss(self, hverts, overts, h_contact, cur_h_contact, alpha=0.5):
         h_v_contact = hverts[h_contact]
-        h_v_contact=h_v_contact.unsqueeze(0)
-        o_v_contact = overts[o_contact]
-        o_v_contact=o_v_contact.unsqueeze(0)
-        hdist,odist=chamfer_distance(h_v_contact,o_v_contact)
-        ho_distance = hdist.mean() + odist.mean()
+        h_v_contact = h_v_contact.unsqueeze(0)
+        cur_h_v_contact = hverts[cur_h_contact]
+        cur_h_v_contact = cur_h_v_contact.unsqueeze(0)
+        
+        # 原有的 chamfer distance loss
+        # hdist, cur_hdist = chamfer_distance(h_v_contact, cur_h_v_contact)
+        # chamfer_loss = hdist.mean() + cur_hdist.mean()
+        
+        # 将 contact 索引转换为 float 类型用于 BCE 计算
+        h_contact_float = h_contact.float()
+        cur_h_contact_float = cur_h_contact.float()
+        
+        # 二元交叉熵 loss
+        bce_loss = nn.functional.binary_cross_entropy(cur_h_contact_float, h_contact_float)
+        
+        # 新增：计算 human contact area 中每个点到物体模型表面的最近距离的平均值
+        overts_full = overts.unsqueeze(0)  # [1, N_obj, 3]
+        # 使用 knn_points 计算 h_v_contact 中每个点到 overts 的最近距离
+        dists, _, _ = knn_points(h_v_contact, overts_full, K=1)  # dists: [1, N_h_contact, 1]
+        surface_dist_loss = dists.mean()
+        
+        # 线性组合
+        ho_distance = alpha * bce_loss + (1 - alpha) * surface_dist_loss
 
         return {"loss_contact": ho_distance}
 

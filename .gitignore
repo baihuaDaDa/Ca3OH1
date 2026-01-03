@@ -2,3 +2,4 @@ HOIGaussian/output/
 HOIGaussian/data/
 submodules/
 __pycache__/
+*log
