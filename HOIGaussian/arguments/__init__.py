@@ -120,9 +120,9 @@ class OptimizationParams(ParamGroup):
         # self.contact=0.01
         
         self.contact=0.1
-        self.depth=1
+        self.depth=0
         self.ho_dist=0
-        self.collision=0.00001
+        self.collision=0
         self.normal=0.0
         super().__init__(parser, "Optimization Parameters")
 

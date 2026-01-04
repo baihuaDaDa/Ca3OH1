@@ -21,7 +21,7 @@ class Losses(object):
     def __init__(self):
         pass
 
-    def compute_contact_loss(self, hverts, overts, h_contact, cur_h_contact, alpha=0.5):
+    def compute_contact_loss(self, hverts, overts, h_contact, cur_h_contact, alpha=0):
         h_v_contact = hverts[h_contact]
         h_v_contact = h_v_contact.unsqueeze(0)
         cur_h_v_contact = hverts[cur_h_contact]
@@ -43,9 +43,12 @@ class Losses(object):
         # 使用 knn_points 计算 h_v_contact 中每个点到 overts 的最近距离
         dists, _, _ = knn_points(h_v_contact, overts_full, K=1)  # dists: [1, N_h_contact, 1]
         surface_dist_loss = dists.mean()
+
+        print(f"Contact Points: {h_v_contact.shape[1]}, Current Contact Points: {cur_h_v_contact.shape[1]}")
+        print(f"BCE Loss: {bce_loss.item()}, Surface Distance Loss: {surface_dist_loss.item()}")
         
         # 线性组合
-        ho_distance = alpha * bce_loss + (1 - alpha) * surface_dist_loss
+        ho_distance = alpha * bce_loss + (1 - alpha) * 100 * surface_dist_loss
 
         return {"loss_contact": ho_distance}
 

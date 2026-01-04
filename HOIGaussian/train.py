@@ -146,7 +146,7 @@ def size_centre_loss(mask1, mask2):
 def training(dataset, opt, pipe, testing_iterations, saving_iterations,
               save_dir, contact):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    tb_writer, log_file = prepare_output_and_logger(dataset)
 
     gaussians = GaussianModel(dataset.sh_degree, dataset.smpl_type, dataset.motion_offset_flag, dataset.actor_gender)
 
@@ -173,6 +173,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
     frame_paths = []
 
     elapsed_time = 0
+    
+    # 早停机制相关变量
+    hoi_phase_started = False  # 是否进入 HOI 优化阶段
+    prev_contact_loss = None   # 上一次的 contact loss
+    convergence_epsilon = 0.01  # 收敛阈值（相对变化率）
+    patience = 5               # 连续多少次变化小于阈值则停止
+    patience_counter = 0       # 当前连续小变化计数
+    hoi_converged = False      # HOI 优化是否已收敛
+    max_hoi_iterations = 200   # HOI 阶段最大迭代次数（允许更多迭代）
+    min_hoi_iterations = 30    # HOI 阶段最少迭代次数（确保充分优化）
+    hoi_iteration_count = 0    # HOI 阶段迭代计数
+    hoi_start_iteration = 100  # HOI 阶段开始的迭代数
+    
     for iteration in range(first_iter, opt.iterations + 1):
 
         iter_start.record()
@@ -309,12 +322,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
 
         ## init hoi loss
         contact_loss, depth_loss, collision_loss = None, None, None
-        if iteration >= 100 and iteration < 160:
+        
+        # 进入 HOI 优化阶段的条件：iteration >= 100 且尚未收敛
+        if iteration >= 100 and not hoi_converged:
+            hoi_phase_started = True
+            hoi_iteration_count += 1
 
             hoi_optim = HOIOptimizer(gaussians, viewpoint_cam, render_pkg)
             
             if contact is not None:
                 # use gt contact area from `contact.json`
+                print("use Net contact.")
                 hoi_optim.pc.contact = contact
             
             hoi_loss_dict, hoi_loss_weights = hoi_optim(opt)
@@ -344,16 +362,49 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
                 collision_loss.backward(retain_graph=True)
 
             loss = gaussian_loss + size_loss * 0.01 + 0.01 * centre_loss
+            print(f"Iteration {iteration}: Total Loss: {loss.item():.6f}, Gaussian Loss: {gaussian_loss.item():.6f}, Contact Loss: {contact_loss.item() if contact_loss is not None else 'N/A'}, Depth Loss: {depth_loss.item() if depth_loss is not None else 'N/A'}, Collision Loss: {collision_loss.item() if collision_loss is not None else 'N/A'}")
             loss.backward()
 
             for name, param in gaussians.get_named_parameters().items():
                 if ((name == 'scale_obj') or (name == 'x_angle') or (name == 'y_angle') or (name == 'z_angle')):
                     param.grad = None
             
-            # Persist optimized poses at iteration 159
-            if iteration == 159:
+            # 收敛检测：基于 contact_loss 的变化
+            # 只有达到最小迭代次数后才允许早停
+            if contact_loss is not None and prev_contact_loss is not None and hoi_iteration_count >= min_hoi_iterations:
+                loss_change = prev_contact_loss - contact_loss.item()
+                threshold = convergence_epsilon * prev_contact_loss
+                if loss_change < 0 or loss_change < threshold:
+                    patience_counter += 1
+                    print(f"  [Convergence Check] Loss change {loss_change:.6f} < threshold {threshold:.6f}, patience: {patience_counter}/{patience}")
+                else:
+                    patience_counter = 0  # 重置计数器
+                
+                # 检查是否满足早停条件
+                if patience_counter >= patience:
+                    hoi_converged = True
+                    print(f"  [Early Stop] Converged after {hoi_iteration_count} HOI iterations!")
+                    print(f"  [Early Stop] HOI optimization stopped at iteration {iteration}")
+            elif hoi_iteration_count < min_hoi_iterations:
+                # 还未达到最小迭代次数，只记录当前状态
+                if contact_loss is not None and prev_contact_loss is not None:
+                    loss_change = abs(prev_contact_loss - contact_loss.item())
+                    print(f"  [Warmup] HOI iteration {hoi_iteration_count}/{min_hoi_iterations} (min required), loss change: {loss_change:.6f}")
+            
+            # 更新上一次的 contact loss
+            if contact_loss is not None:
+                prev_contact_loss = contact_loss.item()
+            
+            # 防止无限循环：达到最大迭代次数也停止
+            if hoi_iteration_count >= max_hoi_iterations:
+                hoi_converged = True
+                print(f"  [Max Iterations] Reached max HOI iterations ({max_hoi_iterations}), stopping.")
+            
+            # 保存结果：在收敛时或达到最大迭代时
+            if hoi_converged:
                 object_path = f"{args.data_path}/{dataset.file_name}/"
                 save_result_hoi(save_dir, h_pose, obj_pose, object_path)
+                print(f"  [Early Stop] Saved HOI results to {save_dir}")
 
         # end time
         end_time = time.time()
@@ -375,14 +426,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
                 contact_loss_for_log=None
                 depth_loss_for_log=None
                 collision_loss_for_log=None
-            if iteration >= 100 and iteration < 160:
+            if iteration >= hoi_start_iteration and not hoi_converged:
                 Ll1_loss_for_log = Ll1.item()
                 mask_loss_for_log = mask_loss.item()
                 ssim_loss_for_log = ssim_loss.item()
                 lpips_loss_for_log = lpips_loss.item()
-                contact_loss_for_log = contact_loss.item()
-                depth_loss_for_log = depth_loss.item()
-                collision_loss_for_log = collision_loss.item()
+                contact_loss_for_log = contact_loss.item() if contact_loss is not None else None
+                depth_loss_for_log = depth_loss.item() if depth_loss is not None else None
+                collision_loss_for_log = collision_loss.item() if collision_loss is not None else None
 
             if iteration % 5 == 0:
                 progress_bar.set_postfix({"#pts": gaussians._xyz.shape[0], "Ll1 Loss": f"{Ll1_loss_for_log:.{3}f}",
@@ -396,7 +447,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, Ll1_o, Ll1_h, mask_loss, mask_loss_o, mask_loss_h, ssim_loss,
+            training_report(tb_writer, log_file, iteration, Ll1, Ll1_o, Ll1_h, mask_loss, mask_loss_o, mask_loss_h, ssim_loss,
                             ssim_loss_o, ssim_loss_h, lpips_loss, lpips_loss_o, lpips_loss_h, contact_loss, depth_loss, collision_loss,
                             iter_start.elapsed_time(iter_end))
 
@@ -412,7 +463,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations,
         end_time = time.time()
         # Calculate elapsed time
         elapsed_time += (end_time - start_time)
+        
+        # 如果 HOI 阶段已收敛，跳出循环
+        if hoi_converged:
+            print(f"\n[Training] Exiting training loop at iteration {iteration} due to HOI convergence.")
+            break
 
+    # Close log file
+    if log_file:
+        log_file.close()
+    
     if frame_paths:
         gif_path = os.path.join(save_dir, "training_10hz.gif")
         with imageio.get_writer(gif_path, mode='I', duration=0.1) as writer:
@@ -436,10 +496,15 @@ def prepare_output_and_logger(args):
         tb_writer = SummaryWriter(args.model_path)
     else:
         print("Tensorboard not available: not logging progress")
-    return tb_writer
+    
+    # Create training log file
+    log_file = open(os.path.join(args.model_path, "training_log.txt"), 'w')
+    log_file.write("Iteration,Ll1_Loss,Ll1_Loss_O,Ll1_Loss_H,Mask_Loss,Mask_Loss_O,Mask_Loss_H,SSIM,SSIM_O,SSIM_H,LPIPS,LPIPS_O,LPIPS_H,Contact_Loss,Depth_Loss,Collision_Loss,Elapsed_Time\n")
+    
+    return tb_writer, log_file
 
 
-def training_report(tb_writer, iteration, Ll1, Ll1_o, Ll1_h, mask, mask_o, mask_h, ssim, ssim_o, ssim_h, lpips, lpips_o,
+def training_report(tb_writer, log_file, iteration, Ll1, Ll1_o, Ll1_h, mask, mask_o, mask_h, ssim, ssim_o, ssim_h, lpips, lpips_o,
                     lpips_h, contact_loss, depth_loss, collision_loss, elapsed):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item() if Ll1 is not None else 0, iteration)
@@ -458,6 +523,26 @@ def training_report(tb_writer, iteration, Ll1, Ll1_o, Ll1_h, mask, mask_o, mask_
         tb_writer.add_scalar('train_loss_patches/depth_loss', depth_loss.item() if depth_loss is not None else 0, iteration)
         tb_writer.add_scalar('train_loss_patches/collision_loss', collision_loss.item() if collision_loss is not None else 0, iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
+    
+    # Write to log file
+    if log_file:
+        log_file.write(f"{iteration},{Ll1.item() if Ll1 is not None else 0:.6f},"
+                      f"{Ll1_o.item() if Ll1_o is not None else 0:.6f},"
+                      f"{Ll1_h.item() if Ll1_h is not None else 0:.6f},"
+                      f"{mask.item() if mask is not None else 0:.6f},"
+                      f"{mask_o.item() if mask_o is not None else 0:.6f},"
+                      f"{mask_h.item() if mask_h is not None else 0:.6f},"
+                      f"{ssim.item() if ssim is not None else 0:.6f},"
+                      f"{ssim_o.item() if ssim_o is not None else 0:.6f},"
+                      f"{ssim_h.item() if ssim_h is not None else 0:.6f},"
+                      f"{lpips.item() if lpips is not None else 0:.6f},"
+                      f"{lpips_o.item() if lpips_o is not None else 0:.6f},"
+                      f"{lpips_h.item() if lpips_h is not None else 0:.6f},"
+                      f"{contact_loss.item() if contact_loss is not None else 0:.6f},"
+                      f"{depth_loss.item() if depth_loss is not None else 0:.6f},"
+                      f"{collision_loss.item() if collision_loss is not None else 0:.6f},"
+                      f"{elapsed:.6f}\n")
+        log_file.flush()  # 立即写入文件
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
